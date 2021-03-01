@@ -18,6 +18,18 @@ def unroll(t):
 Match = NewType("Match", str)
 
 
+class RegmaException(Exception):
+    """Base class for regma exceptions."""
+
+
+class RemainingInput(RegmaException):
+    """Raised when the input string to `Regex.lex` was partially matches"""
+
+
+class FailedMatching(RegmaException):
+    """Raised when a required rule failed to match correctly."""
+
+
 @dataclass
 class Regex:
     pattern: Optional[str] = field(default=None)
@@ -94,13 +106,15 @@ class Regex:
             result = rule(input, ignore_whitespace=ignore_whitespace)
 
             if result is None:
-                raise Exception(f"Failed to match with {input=!r} ({list(iter(self))=!r})")
+                raise FailedMatching(
+                    f"Failed to match with {input=!r} ({list(iter(self))=!r})"
+                )
 
             (input, match) = result
             yield from unroll(match)
 
         if input:
-            raise Exception(input)
+            raise RemainingInput(input)
 
 
 @dataclass
@@ -129,11 +143,10 @@ class Repeating(Regex):
     ) -> Optional[Tuple[str, Iterable[Match]]]:
         assert self.rule is not None
 
+        rule = self.rule
         matched = []
 
-        while (
-            result := self.rule(input, ignore_whitespace=ignore_whitespace)
-        ) is not None:
+        while (result := rule(input, ignore_whitespace=ignore_whitespace)) is not None:
             (input, match) = result
             matched.append(typing.cast("Match", match))
 
