@@ -86,11 +86,15 @@ class Regex:
         return self
 
     def lex(self, input: str, *, ignore_whitespace: bool = False) -> Iterator[str]:
+        if type(self) not in (Seq, Regex):
+            yield from Seq(rules=[self]).lex(input, ignore_whitespace=ignore_whitespace)
+            return
+
         for rule in self:
             result = rule(input, ignore_whitespace=ignore_whitespace)
 
             if result is None:
-                raise Exception(f"Failed to match with {input=!r} ({rule=!r})")
+                raise Exception(f"Failed to match with {input=!r} ({list(iter(self))=!r})")
 
             (input, match) = result
             yield from unroll(match)
@@ -202,6 +206,9 @@ class RegexGroup(Regex):
 
 
 class Alt(RegexGroup):
+    def __or__(self, o):
+        return Alt(rules=self.rules + [o])
+
     def __call__(
         self, input: str, *, ignore_whitespace: bool = False
     ) -> Optional[Tuple[str, Iterable[Match]]]:
