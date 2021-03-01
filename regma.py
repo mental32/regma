@@ -1,13 +1,7 @@
 import re
 import typing
 from dataclasses import dataclass, field
-from typing import Iterable, Iterator, List, NewType, Optional, Tuple, TypeVar
-
-T = TypeVar("T")
-U = TypeVar("U")
-E = TypeVar("E")
-I = TypeVar("I")
-O = TypeVar("O")
+from typing import Iterable, Iterator, List, NewType, Optional, Tuple
 
 
 def unroll(t):
@@ -23,13 +17,11 @@ def unroll(t):
 
 Match = NewType("Match", str)
 
-
 @dataclass
 class Regex:
     pattern: Optional[str] = field(default=None)
 
     def __str__(self) -> str:
-        # assert self.pattern is not None
         return self.pattern or ""
 
     def __add__(self, o):
@@ -44,8 +36,11 @@ class Regex:
     def __iter__(self):
         yield self
 
-    def __call__(self, input: str) -> Optional[Tuple[str, Iterable[Match]]]:
+    def __call__(self, input: str, *, ignore_whitespace: bool = False) -> Optional[Tuple[str, Iterable[Match]]]:
         assert self.pattern is not None
+
+        if ignore_whitespace and (result := Whitespace(input)) is not None:
+            (input, _) = result
 
         if (match := re.match(self.pattern, input)) is not None:
             length = len(match.group(0))
@@ -54,11 +49,7 @@ class Regex:
         return None
 
     def multiple(self):
-        if (s := str(self))[-1] == "?":
-            return Regex(f"{s[:-1]}*")
-
-        else:
-            return Regex(f"{s!s}+")
+        return Seq(rules=[self, self.repeating()])
 
     def optional(self):
         return Maybe(rule=self)
@@ -72,9 +63,28 @@ class Regex:
     def atom(self):
         return Atom(rule=self)
 
-    def lex(self, input: str) -> Iterator[str]:
+    def exactly(self, n: int):
+        seq = Seq(rules=[])
+
+        for _ in range(n):
+            seq.rules.append(self)
+
+        return self
+
+    def many(self, m: int, n: int):
+        seq = Seq(rules=[])
+
+        for _ in range(m):
+            seq.rules.append(self)
+
+        for _ in range(n):
+            seq.rules.append(self.optional())
+
+        return self
+
+    def lex(self, input: str, *, ignore_whitespace: bool = False) -> Iterator[str]:
         for rule in self:
-            result = rule(input)
+            result = rule(input, ignore_whitespace=ignore_whitespace)
 
             if result is None:
                 raise Exception(f"Failed to match with {input=!r} ({rule=!r})")
@@ -83,19 +93,32 @@ class Regex:
             yield from unroll(match)
 
         if input:
-            raise Exception(f"unhandled {input=!r}")
+            raise Exception(input)
 
+@dataclass
+class Ignore(Regex):
+    rule: Optional[Regex] = field(default=None)
+    discard: Optional[Regex] = field(default=None)
+
+    def __call__(self, input: str, *, ignore_whitespace: bool = False) -> Optional[Tuple[str, Iterable[Match]]]:
+        assert self.rule is not None
+        assert self.discard is not None
+
+        if ignore_whitespace and (result := self.discard(input)) is not None:
+            (input, _) = result
+
+        return self.rule(input, ignore_whitespace=ignore_whitespace)
 
 @dataclass
 class Repeating(Regex):
     rule: Optional[Regex] = field(default=None)
 
-    def __call__(self, input: str) -> Optional[Tuple[str, Iterable[Match]]]:
+    def __call__(self, input: str, *, ignore_whitespace: bool = False) -> Optional[Tuple[str, Iterable[Match]]]:
         assert self.rule is not None
 
         matched = []
 
-        while (result := self.rule(input)) is not None:
+        while (result := self.rule(input, ignore_whitespace=ignore_whitespace)) is not None:
             (input, match) = result
             matched.append(typing.cast("Match", match))
 
@@ -106,10 +129,10 @@ class Repeating(Regex):
 class Atom(Regex):
     rule: Optional[Regex] = field(default=None)
 
-    def __call__(self, input: str) -> Optional[Tuple[str, Iterable[Match]]]:
+    def __call__(self, input: str, *, ignore_whitespace: bool = False) -> Optional[Tuple[str, Iterable[Match]]]:
         assert self.rule is not None
 
-        result = self.rule(input)
+        result = self.rule(input, ignore_whitespace=ignore_whitespace)
 
         if result is None:
             return None
@@ -136,11 +159,11 @@ class Maybe(Regex):
         assert self.rule is not None
         return Repeating(rule=self.rule)
 
-    def __call__(self, input: str) -> Optional[Tuple[str, Iterable[Match]]]:
+    def __call__(self, input: str, *, ignore_whitespace: bool = False) -> Optional[Tuple[str, Iterable[Match]]]:
         if self.rule is None:
             return (input, [])
 
-        result = self.rule(input)
+        result = self.rule(input, ignore_whitespace=ignore_whitespace)
 
         if result is None:
             return (input, [])
@@ -166,9 +189,9 @@ class RegexGroup(Regex):
 
 
 class Alt(RegexGroup):
-    def __call__(self, input: str) -> Optional[Tuple[str, Iterable[Match]]]:
+    def __call__(self, input: str, *, ignore_whitespace: bool = False) -> Optional[Tuple[str, Iterable[Match]]]:
         for rule in self:
-            result = rule(input)
+            result = rule(input, ignore_whitespace=ignore_whitespace)
 
             if result is not None:
                 (input, match) = result
@@ -181,16 +204,19 @@ class Seq(RegexGroup):
     def multiple(self):
         return self + Repeating(rule=self)
 
-    def __call__(self, input: str) -> Optional[Tuple[str, Iterable[Match]]]:
+    def __call__(self, input: str, *, ignore_whitespace: bool = False) -> Optional[Tuple[str, Iterable[Match]]]:
         matched = []
 
         for rule in self:
-            result = rule(input)
+            result = rule(input, ignore_whitespace=ignore_whitespace)
 
             if result is None:
                 return None
 
             (input, match) = result
-            matched.append(match)
+            matched.append(typing.cast("Match", match))
 
         return (input, matched)
+
+
+Whitespace = Regex(r"\s+")

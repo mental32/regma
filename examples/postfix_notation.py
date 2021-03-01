@@ -2,9 +2,8 @@ from pprint import pprint
 
 from regma import Regex
 
-whitespace = Regex(r"\s+")
 number = Regex(r"\d+")
-postfix_notation = number + whitespace + (number | whitespace | r"[\+\-\*\/\^]").repeating()
+postfix_notation = number + (number | r"[\+\-\*\/\^]").repeating()
 
 operators = {
     "+": (lambda a, b: a + b),
@@ -16,7 +15,7 @@ operators = {
 
 while (s := input("$ ")): 
     try:
-        tokens = [_ for _ in postfix_notation.lex(s) if _.strip()]
+        tokens = list(postfix_notation.lex(s, ignore_whitespace=True))
     except Exception:
         print(f"syntax error: {s!r}")
         continue
