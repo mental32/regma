@@ -17,6 +17,7 @@ def unroll(t):
 
 Match = NewType("Match", str)
 
+
 @dataclass
 class Regex:
     pattern: Optional[str] = field(default=None)
@@ -36,7 +37,9 @@ class Regex:
     def __iter__(self):
         yield self
 
-    def __call__(self, input: str, *, ignore_whitespace: bool = False) -> Optional[Tuple[str, Iterable[Match]]]:
+    def __call__(
+        self, input: str, *, ignore_whitespace: bool = False
+    ) -> Optional[Tuple[str, Iterable[Match]]]:
         assert self.pattern is not None
 
         if ignore_whitespace and (result := Whitespace(input)) is not None:
@@ -95,12 +98,15 @@ class Regex:
         if input:
             raise Exception(input)
 
+
 @dataclass
 class Ignore(Regex):
     rule: Optional[Regex] = field(default=None)
     discard: Optional[Regex] = field(default=None)
 
-    def __call__(self, input: str, *, ignore_whitespace: bool = False) -> Optional[Tuple[str, Iterable[Match]]]:
+    def __call__(
+        self, input: str, *, ignore_whitespace: bool = False
+    ) -> Optional[Tuple[str, Iterable[Match]]]:
         assert self.rule is not None
         assert self.discard is not None
 
@@ -109,16 +115,21 @@ class Ignore(Regex):
 
         return self.rule(input, ignore_whitespace=ignore_whitespace)
 
+
 @dataclass
 class Repeating(Regex):
     rule: Optional[Regex] = field(default=None)
 
-    def __call__(self, input: str, *, ignore_whitespace: bool = False) -> Optional[Tuple[str, Iterable[Match]]]:
+    def __call__(
+        self, input: str, *, ignore_whitespace: bool = False
+    ) -> Optional[Tuple[str, Iterable[Match]]]:
         assert self.rule is not None
 
         matched = []
 
-        while (result := self.rule(input, ignore_whitespace=ignore_whitespace)) is not None:
+        while (
+            result := self.rule(input, ignore_whitespace=ignore_whitespace)
+        ) is not None:
             (input, match) = result
             matched.append(typing.cast("Match", match))
 
@@ -129,7 +140,9 @@ class Repeating(Regex):
 class Atom(Regex):
     rule: Optional[Regex] = field(default=None)
 
-    def __call__(self, input: str, *, ignore_whitespace: bool = False) -> Optional[Tuple[str, Iterable[Match]]]:
+    def __call__(
+        self, input: str, *, ignore_whitespace: bool = False
+    ) -> Optional[Tuple[str, Iterable[Match]]]:
         assert self.rule is not None
 
         result = self.rule(input, ignore_whitespace=ignore_whitespace)
@@ -139,16 +152,14 @@ class Atom(Regex):
 
         (input, matches_) = result
 
-        atom = Match(
-            "".join(
-                [
-                    match[0] if isinstance(match, re.Match) else match
-                    for match in unroll(matches_)
-                ]
-            )
+        atom = "".join(
+            [
+                match[0] if isinstance(match, re.Match) else match
+                for match in unroll(matches_)
+            ]
         )
 
-        return (input, [atom])
+        return (input, [Match(atom)])
 
 
 @dataclass
@@ -159,7 +170,9 @@ class Maybe(Regex):
         assert self.rule is not None
         return Repeating(rule=self.rule)
 
-    def __call__(self, input: str, *, ignore_whitespace: bool = False) -> Optional[Tuple[str, Iterable[Match]]]:
+    def __call__(
+        self, input: str, *, ignore_whitespace: bool = False
+    ) -> Optional[Tuple[str, Iterable[Match]]]:
         if self.rule is None:
             return (input, [])
 
@@ -189,7 +202,9 @@ class RegexGroup(Regex):
 
 
 class Alt(RegexGroup):
-    def __call__(self, input: str, *, ignore_whitespace: bool = False) -> Optional[Tuple[str, Iterable[Match]]]:
+    def __call__(
+        self, input: str, *, ignore_whitespace: bool = False
+    ) -> Optional[Tuple[str, Iterable[Match]]]:
         for rule in self:
             result = rule(input, ignore_whitespace=ignore_whitespace)
 
@@ -204,7 +219,9 @@ class Seq(RegexGroup):
     def multiple(self):
         return self + Repeating(rule=self)
 
-    def __call__(self, input: str, *, ignore_whitespace: bool = False) -> Optional[Tuple[str, Iterable[Match]]]:
+    def __call__(
+        self, input: str, *, ignore_whitespace: bool = False
+    ) -> Optional[Tuple[str, Iterable[Match]]]:
         matched = []
 
         for rule in self:

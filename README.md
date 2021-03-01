@@ -2,7 +2,8 @@
 ## A Python DSL-like library for creating lexers.
 
 Regma abuses Python operator overloading to provide an API for creating lexers
-that feels like as if you were writing a regular grammar.
+that feels like as if you were writing a grammar, consider Regma a layer of
+syntactic sugar for the builtin regex module.
 
 ### Examples
 
