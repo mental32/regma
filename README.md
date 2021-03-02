@@ -10,15 +10,14 @@ syntactic sugar for the builtin regex module.
 #### Reverse Polish Notation (postfix notation)
 
 ```py
-from regma import Regex
-
-whitespace = Regex(r"\s+")
-number = Regex(r"\d+")
-postfix = number + whitespace + (number | whitespace | r"[\+\-\*\/\^]").repeating()
-
 from pprint import pprint
 
-tokens = list(postfix.lex("14 6 + 7 ^ 3 * 2 - 4 5 + *"))
+from regma import Regex
+
+number = Regex(r"\d+")
+postfix = number + (number | Regex(r"[\+\-\*\/\^]")).repeating()
+
+tokens = list(postfix.lex("14 6 + 7 ^ 3 * 2 - 4 5 + *", ignore_whitespace=True))
 
 pprint(tokens)
 ```
@@ -26,23 +25,19 @@ pprint(tokens)
 #### Fake Lisp
 
 ```py
+from pprint import pprint
+
 from regma import Regex
 
 IDENT = Regex(r"[a-zA-Z_-]+")
-
 # IDENT ("." + IDENT)*
-attr = (IDENT + (r"\." + IDENT).repeating()).atom()
-
+attr = (IDENT + ("." + IDENT).repeating()).atom()
 # (ATTR | regex "\s" | regex "\d+" )
-atom = attr | r"\s" | r"\d+"
-
+atom = attr | Regex(r"\s") | Regex(r"\d+")
 # "[" ATOM* "]"
-lst = r"\[" + atom.repeating() + r"\]"
-
+lst = "[" + atom.repeating() + "]"
 # "(" (ATOM | LIST)* ")"
-sexpr = r"\(" + (atom | lst).repeating() + r"\)"
-
-from pprint import pprint
+sexpr = "(" + (atom | lst).repeating() + ")"
 
 tokens = list(sexpr.lex("(reduce-list [ y.z a b c])"))
 
