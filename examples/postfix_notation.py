@@ -1,9 +1,7 @@
-from pprint import pprint
-
 from regma import Regex
 
 number = Regex(r"\d+")
-postfix_notation = number + (number | r"[\+\-\*\/\^]").repeating()
+postfix_notation = number + (number | "+" | "-" | "*" | "/" | "^").repeating()
 
 operators = {
     "+": (lambda a, b: a + b),

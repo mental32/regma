@@ -1,21 +1,51 @@
 import re
 import typing
 from dataclasses import dataclass, field
-from typing import Iterable, Iterator, List, NewType, Optional, Tuple
+from contextlib import suppress
+from typing import (
+    Any,
+    Callable,
+    Iterable,
+    Iterator,
+    List,
+    NewType,
+    Optional,
+    Tuple,
+    Type,
+    TypeVar,
+    Union,
+)
+
+T = TypeVar("T")
+U = TypeVar("U")
 
 
-def unroll(t):
-    if isinstance(t, list):
-        for i in t:
-            if isinstance(i, list):
-                yield from unroll(i)
-            else:
-                yield i
+def _flattened_list(ts: Union[T, List[T]], /) -> Iterator[T]:
+    if isinstance(ts, list):
+        for t in ts:
+            yield from typing.cast("Iterator[T]", _flattened_list(t))
     else:
-        yield t
+        yield ts
+
+
+def _map_exception(
+    f: Callable[[], U],
+    *,
+    default: T,
+    catch: Iterable[Type[Exception]],
+) -> Union[T, U]:
+    try:
+        return f()
+    except Exception as exc:
+        for kind in catch:
+            if isinstance(exc, kind):
+                return default
+        else:
+            raise
 
 
 Match = NewType("Match", str)
+ParseResult = Tuple[str, Any]
 
 
 class RegmaException(Exception):
@@ -49,19 +79,21 @@ class Regex:
     def __iter__(self):
         yield self
 
-    def __call__(
-        self, input: str, *, ignore_whitespace: bool = False
-    ) -> Optional[Tuple[str, Iterable[Match]]]:
+    def __call__(self, stream: str, *, ignore_whitespace: bool = False) -> ParseResult:
         assert self.pattern is not None
 
-        if ignore_whitespace and (result := Whitespace(input)) is not None:
-            (input, _) = result
+        if ignore_whitespace:
+            with suppress(FailedMatching):
+                result = Whitespace(stream)
+                (stream, _) = result
 
-        if (match := re.match(self.pattern, input)) is not None:
+        match = re.match(self.pattern, stream)
+
+        if match is not None:
             length = len(match.group(0))
-            return (input[length:], [Match(match[0])])
+            return (stream[length:], [Match(match[0])])
 
-        return None
+        raise FailedMatching((stream, self))
 
     def multiple(self):
         return Seq(rules=[self, self.repeating()])
@@ -97,24 +129,19 @@ class Regex:
 
         return self
 
-    def lex(self, input: str, *, ignore_whitespace: bool = False) -> Iterator[str]:
+    def lex(self, stream: str, *, ignore_whitespace: bool = False) -> Iterator[str]:
         if type(self) not in (Seq, Regex):
-            yield from Seq(rules=[self]).lex(input, ignore_whitespace=ignore_whitespace)
+            yield from Seq(rules=[self]).lex(stream, ignore_whitespace=ignore_whitespace)
             return
 
         for rule in self:
-            result = rule(input, ignore_whitespace=ignore_whitespace)
+            result = rule(stream, ignore_whitespace=ignore_whitespace)
 
-            if result is None:
-                raise FailedMatching(
-                    f"Failed to match with {input=!r} ({list(iter(self))=!r})"
-                )
+            (stream, match) = result
+            yield from typing.cast("Iterator[Match]", _flattened_list(match))
 
-            (input, match) = result
-            yield from unroll(match)
-
-        if input:
-            raise RemainingInput(input)
+        if stream:
+            raise RemainingInput(stream)
 
 
 @dataclass
@@ -122,61 +149,59 @@ class Ignore(Regex):
     rule: Optional[Regex] = field(default=None)
     discard: Optional[Regex] = field(default=None)
 
-    def __call__(
-        self, input: str, *, ignore_whitespace: bool = False
-    ) -> Optional[Tuple[str, Iterable[Match]]]:
+    def __call__(self, stream: str, *, ignore_whitespace: bool = False) -> ParseResult:
         assert self.rule is not None
         assert self.discard is not None
 
-        if ignore_whitespace and (result := self.discard(input)) is not None:
-            (input, _) = result
+        if ignore_whitespace:
+            with suppress(FailedMatching):
+                result = self.discard(stream)
+                (stream, _) = result
 
-        return self.rule(input, ignore_whitespace=ignore_whitespace)
+        return self.rule(stream, ignore_whitespace=ignore_whitespace)
 
 
 @dataclass
 class Repeating(Regex):
     rule: Optional[Regex] = field(default=None)
 
-    def __call__(
-        self, input: str, *, ignore_whitespace: bool = False
-    ) -> Optional[Tuple[str, Iterable[Match]]]:
+    def __call__(self, stream: str, *, ignore_whitespace: bool = False) -> ParseResult:
         assert self.rule is not None
 
         rule = self.rule
         matched = []
 
-        while (result := rule(input, ignore_whitespace=ignore_whitespace)) is not None:
-            (input, match) = result
-            matched.append(typing.cast("Match", match))
+        f = lambda stream: _map_exception(
+            (lambda: rule(stream, ignore_whitespace=ignore_whitespace)),
+            default=None,
+            catch=[FailedMatching],
+        )
 
-        return (input, matched)
+        while (result := f(stream)) is not None:
+            (stream, match) = result
+            matched.append(match)
+
+        return (stream, matched)
 
 
 @dataclass
 class Atom(Regex):
     rule: Optional[Regex] = field(default=None)
 
-    def __call__(
-        self, input: str, *, ignore_whitespace: bool = False
-    ) -> Optional[Tuple[str, Iterable[Match]]]:
+    def __call__(self, stream: str, *, ignore_whitespace: bool = False) -> ParseResult:
         assert self.rule is not None
 
-        result = self.rule(input, ignore_whitespace=ignore_whitespace)
+        result = self.rule(stream, ignore_whitespace=ignore_whitespace)
 
-        if result is None:
-            return None
+        (stream, _) = result
 
-        (input, matches_) = result
+        matches = typing.cast("Iterable[Union[re.Match, Match]]", _flattened_list(_))
 
-        atom = "".join(
-            [
-                match[0] if isinstance(match, re.Match) else match
-                for match in unroll(matches_)
-            ]
-        )
+        atom: List[str] = [
+            match.group(0) if isinstance(match, re.Match) else match for match in matches
+        ]
 
-        return (input, [Match(atom)])
+        return (stream, [Match("".join(atom))])
 
 
 @dataclass
@@ -187,26 +212,39 @@ class Maybe(Regex):
         assert self.rule is not None
         return Repeating(rule=self.rule)
 
-    def __call__(
-        self, input: str, *, ignore_whitespace: bool = False
-    ) -> Optional[Tuple[str, Iterable[Match]]]:
+    def __call__(self, stream: str, *, ignore_whitespace: bool = False) -> ParseResult:
         if self.rule is None:
-            return (input, [])
+            return (stream, [])
 
-        result = self.rule(input, ignore_whitespace=ignore_whitespace)
-
-        if result is None:
-            return (input, [])
-
-        return result
+        return _map_exception(
+            (lambda: self.rule(stream, ignore_whitespace=ignore_whitespace)),
+            default=(stream, []),
+            catch=[FailedMatching],
+        )
 
 
 @dataclass
 class RegexGroup(Regex):
     rules: List[Regex] = field(default_factory=list)
 
+    @staticmethod
+    def _normalize(seq: List[Any]) -> List[Regex]:
+        r = []
+
+        for item in seq:
+            if isinstance(item, Regex):
+                i = item
+            elif isinstance(item, str):
+                i = Regex(pattern=re.escape(item))
+            else:
+                raise TypeError(f"unexpected type to normalize... {item!r}")
+
+            r.append(i)
+
+        return r
+
     def __post_init__(self):
-        self.rules = [Regex(pattern=r) if isinstance(r, str) else r for r in self.rules]
+        self.rules = list(self._normalize(self.rules))
 
     def __add__(self, o):
         return Seq(rules=[self, o])
@@ -222,38 +260,33 @@ class Alt(RegexGroup):
     def __or__(self, o):
         return Alt(rules=self.rules + [o])
 
-    def __call__(
-        self, input: str, *, ignore_whitespace: bool = False
-    ) -> Optional[Tuple[str, Iterable[Match]]]:
+    def __call__(self, stream: str, *, ignore_whitespace: bool = False) -> ParseResult:
         for rule in self:
-            result = rule(input, ignore_whitespace=ignore_whitespace)
+            try:
+                result = rule(stream, ignore_whitespace=ignore_whitespace)
+            except FailedMatching:
+                continue
+            else:
+                (stream, match) = result
+                return (stream, match)
 
-            if result is not None:
-                (input, match) = result
-                return (input, match)
-
-        return None
+        raise FailedMatching((stream, self))
 
 
 class Seq(RegexGroup):
     def multiple(self):
         return self + Repeating(rule=self)
 
-    def __call__(
-        self, input: str, *, ignore_whitespace: bool = False
-    ) -> Optional[Tuple[str, Iterable[Match]]]:
+    def __call__(self, stream: str, *, ignore_whitespace: bool = False) -> ParseResult:
         matched = []
 
         for rule in self:
-            result = rule(input, ignore_whitespace=ignore_whitespace)
+            result = rule(stream, ignore_whitespace=ignore_whitespace)
 
-            if result is None:
-                return None
-
-            (input, match) = result
+            (stream, match) = result
             matched.append(typing.cast("Match", match))
 
-        return (input, matched)
+        return (stream, matched)
 
 
 Whitespace = Regex(r"\s+")
