@@ -75,6 +75,40 @@ class Regma(ABC):
     def __or__(self, o):
         return Alt(rules=[self, o])
 
+    def multiple(self):
+        return Seq(rules=[self, self.repeating()])
+
+    def optional(self):
+        return Maybe(rule=self)
+
+    def capture(self):
+        return Seq(rules=[self])
+
+    def repeating(self):
+        return Repeating(rule=self)
+
+    def atom(self):
+        return Atom(rule=self)
+
+    def exactly(self, n: int):
+        seq = Seq(rules=[])
+
+        for _ in range(n):
+            seq.rules.append(self)
+
+        return self
+
+    def many(self, m: int, n: int):
+        seq = Seq(rules=[])
+
+        for _ in range(m):
+            seq.rules.append(self)
+
+        for _ in range(n):
+            seq.rules.append(self.optional())
+
+        return self
+
 
 @dataclass
 class Literal(Regma):
@@ -119,40 +153,6 @@ class Regex(Regma):
 
         raise FailedMatching((stream, self))
 
-    def multiple(self):
-        return Seq(rules=[self, self.repeating()])
-
-    def optional(self):
-        return Maybe(rule=self)
-
-    def capture(self):
-        return Seq(rules=[self])
-
-    def repeating(self):
-        return Repeating(rule=self)
-
-    def atom(self):
-        return Atom(rule=self)
-
-    def exactly(self, n: int):
-        seq = Seq(rules=[])
-
-        for _ in range(n):
-            seq.rules.append(self)
-
-        return self
-
-    def many(self, m: int, n: int):
-        seq = Seq(rules=[])
-
-        for _ in range(m):
-            seq.rules.append(self)
-
-        for _ in range(n):
-            seq.rules.append(self.optional())
-
-        return self
-
     def lex(self, stream: str, *, ignore_whitespace: bool = False) -> Iterator[str]:
         if type(self) not in (Seq, Regex):
             yield from Seq(rules=[self]).lex(stream, ignore_whitespace=ignore_whitespace)
@@ -170,8 +170,8 @@ class Regex(Regma):
 
 @dataclass
 class Ignore(Regex):
-    rule: Optional[Regex] = field(default=None)
-    discard: Optional[Regex] = field(default=None)
+    rule: Optional[Regma] = field(default=None)
+    discard: Optional[Regma] = field(default=None)
 
     def __call__(self, stream: str, *, ignore_whitespace: bool = False) -> ParseResult:
         assert self.rule is not None
@@ -187,7 +187,7 @@ class Ignore(Regex):
 
 @dataclass
 class Repeating(Regex):
-    rule: Optional[Regex] = field(default=None)
+    rule: Optional[Regma] = field(default=None)
 
     def __call__(self, stream: str, *, ignore_whitespace: bool = False) -> ParseResult:
         assert self.rule is not None
@@ -210,7 +210,7 @@ class Repeating(Regex):
 
 @dataclass
 class Atom(Regex):
-    rule: Optional[Regex] = field(default=None)
+    rule: Optional[Regma] = field(default=None)
 
     def __call__(self, stream: str, *, ignore_whitespace: bool = False) -> ParseResult:
         assert self.rule is not None
@@ -230,7 +230,7 @@ class Atom(Regex):
 
 @dataclass
 class Maybe(Regex):
-    rule: Optional[Regex] = field(default=None)
+    rule: Optional[Regma] = field(default=None)
 
     def multiple(self):
         assert self.rule is not None
@@ -259,7 +259,7 @@ class RegexGroup(Regex):
             if isinstance(item, Regma):
                 i = item
             elif isinstance(item, str):
-                i = Regex(pattern=re.escape(item))
+                i = Literal(item)
             else:
                 raise TypeError(f"unexpected type to normalize... {item!r}")
 
