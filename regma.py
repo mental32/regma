@@ -1,5 +1,6 @@
 import re
 import typing
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from contextlib import suppress
 from typing import (
@@ -60,12 +61,10 @@ class FailedMatching(RegmaException):
     """Raised when a required rule failed to match correctly."""
 
 
-@dataclass
-class Regex:
-    pattern: Optional[str] = field(default=None)
-
-    def __str__(self) -> str:
-        return self.pattern or ""
+class Regma(ABC):
+    @abstractmethod
+    def __call__(self, stream: str, *, ignore_whitespace: bool = False) -> ParseResult:
+        pass
 
     def __add__(self, o):
         return Seq(rules=[self, o])
@@ -75,6 +74,31 @@ class Regex:
 
     def __or__(self, o):
         return Alt(rules=[self, o])
+
+
+@dataclass
+class Literal(Regma):
+    pattern: str
+
+    def __call__(self, stream: str, *, ignore_whitespace: bool) -> ParseResult:
+        if ignore_whitespace:
+            stream = stream.lstrip()
+
+        if stream.startswith(self.pattern):
+            length = len(self.pattern)
+            stream = stream[length:]
+
+            return (stream, self.pattern)
+
+        raise FailedMatching((stream, self))
+
+
+@dataclass
+class Regex(Regma):
+    pattern: Optional[str] = field(default=None)
+
+    def __str__(self) -> str:
+        return self.pattern or ""
 
     def __iter__(self):
         yield self
@@ -225,14 +249,14 @@ class Maybe(Regex):
 
 @dataclass
 class RegexGroup(Regex):
-    rules: List[Regex] = field(default_factory=list)
+    rules: List[Regma] = field(default_factory=list)
 
     @staticmethod
-    def _normalize(seq: List[Any]) -> List[Regex]:
+    def _normalize(seq: List[Any]) -> List[Regma]:
         r = []
 
         for item in seq:
-            if isinstance(item, Regex):
+            if isinstance(item, Regma):
                 i = item
             elif isinstance(item, str):
                 i = Regex(pattern=re.escape(item))
