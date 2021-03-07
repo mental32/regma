@@ -90,6 +90,9 @@ class Regma(ABC):
     def atom(self):
         return Atom(rule=self)
 
+    def map(self, func: Callable[[Any], Any]):
+        return Mapped(rule=self, f=func)
+
     def exactly(self, n: int):
         seq = Seq(rules=[])
 
@@ -166,6 +169,17 @@ class Regex(Regma):
 
         if stream:
             raise RemainingInput(stream)
+
+
+
+@dataclass
+class Mapped(Regex):
+    rule: Regma = field(default_factory=Regma)
+    f: Callable[[List[Any]], Any] = field(default=(lambda _: _))
+
+    def __call__(self, stream: str, *, ignore_whitespace: bool) -> ParseResult:
+        (stream, match) = self.rule(stream, ignore_whitespace=ignore_whitespace)
+        return (stream, self.f(match))
 
 
 @dataclass
